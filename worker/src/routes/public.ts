@@ -28,6 +28,8 @@ import type { PublicClient } from '../utils/public-client';
 import { sanitizeSetupDiagnosticDetail } from '../utils/setup-diagnostics';
 import { getCloudflareClientIp } from '../utils/request-ip';
 import { readLiveSnapshot, readRateLimitResult } from '../utils/do-response';
+import type { LiveSnapshot } from '../utils/do-response';
+import { buildNodeStats } from '../utils/node-stats';
 import { readJsonWithLimit } from '../utils/request-body';
 import { base64ToBytes } from '../utils/theme-package';
 
@@ -1371,6 +1373,39 @@ publicRoutes.get('/clients', async (c) => {
 });
 
 // 获取公开设置
+
+// Aggregate node statistics for the dashboard (GET /api/stats).
+// Shares the clients snapshot and the live snapshot with
+// GET /api/public/bootstrap, but returns the derived counters the
+// dashboard displays instead of the raw lists.
+publicRoutes.get('/stats', async (c) => {
+  const fresh = isFreshPublicMetadataRequest(c);
+  const includeHidden = c.req.query('include_hidden') === '1' && await hasAdminSession(c);
+  const limited = await guardPublicMetadata(c, 'stats');
+  if (limited) return limited;
+  const cached = includeHidden ? null : await getPublicEdgeCache(c, PUBLIC_LIVE_CACHE_SECONDS);
+  if (cached) return cached;
+  const database = getDatabase(c.env);
+  const doId = c.env.LIVE_DATA.idFromName('global');
+  const stub = c.env.LIVE_DATA.get(doId);
+  const [snapshot, liveResponse] = await Promise.all([
+    getPublicClientsSnapshot(c, database, fresh, includeHidden),
+    stub.fetch(new Request('https://do/live')),
+  ]);
+  let live: LiveSnapshot | null = null;
+  try {
+    live = await readLiveSnapshot(liveResponse);
+  } catch {
+    live = null;
+  }
+  const stats = buildNodeStats(snapshot.clients, live?.online ?? [], live?.data ?? {});
+  const response = includeHidden
+    ? privateJsonResponse(stats)
+    : withPublicCacheHeader(c, privateJsonResponse(stats), PUBLIC_LIVE_CACHE_SECONDS, 'miss');
+  if (!includeHidden) putPublicEdgeCache(c, response);
+  return response;
+});
+
 publicRoutes.get('/public', async (c) => {
   const fresh = isFreshPublicMetadataRequest(c);
   const cached = !fresh ? await getCachedPublicMetadataResponse(c, 'settings') : null;

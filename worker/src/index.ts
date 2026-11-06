@@ -162,6 +162,7 @@ function canServeWithoutDatabaseStartup(pathname: string): boolean {
     pathname === '/api/nodes' ||
     pathname === '/api/public' ||
     pathname === '/api/public/bootstrap' ||
+    pathname === '/api/stats' ||
     pathname === '/api/site-logo' ||
     pathname === '/api/task/ping' ||
     pathname.startsWith('/api/records/') ||
